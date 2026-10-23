@@ -19,8 +19,8 @@ stop and report past it.
 - A third row of four boxes under the power row, always present: disk read, disk write, network
   receive, network send. Each box shows the current rate in its title over a graph of its history
   scaled to the largest visible sample, in the low load color (like the power boxes).
-- Narrow boxes use `D-R`, `D-W`, `NET↓`, `NET↑` titles; the rate drops to a whole unit only when
-  the box is narrower than the title.
+- The box label never shortens. A narrow box first drops the rate's `B` and space
+  (`DISK R 12M/s`), then the rate alone when even that doesn't fit (`DISK R`).
 - Without a power row (a VM) the top row and the I/O row split the metrics box.
 - JSON gains `disk` (`read_bytes`, `write_bytes`) and `network` (`rx_bytes`, `tx_bytes`), all bytes
   per second. Prometheus gains `macmon_disk_read_bytes_per_second`,
@@ -38,7 +38,8 @@ stop and report past it.
   later rates divide by the measured wall time between counter reads.
 - Library API is additive: `Metrics` gains `disk: DiskMetrics` and `network: NetMetrics`.
 - Boxes use decimal units (`KB/s`, `MB/s`, `GB/s`) with one decimal above 1 KB/s, as disk and
-  network speeds are normally quoted.
+  network speeds are normally quoted. The compact form uses `K/s`, `M/s`, `G/s`, with a decimal
+  below 10 only, so it fits beside the full label.
 
 ## Tasks
 

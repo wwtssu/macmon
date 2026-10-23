@@ -1305,6 +1305,19 @@ mod tests {
   }
 
   #[test]
+  fn narrow_throughput_boxes_keep_their_labels() {
+    let mut app = test_app();
+    let screen = render_to_string(&mut app, 80, 24);
+
+    // 19-20 cells per box: the full rate does not fit, the compact one does; the label stays
+    assert!(screen.contains("DISK R 12M/s"), "{screen}");
+    assert!(screen.contains("DISK W 4.5M/s"), "{screen}");
+    assert!(screen.contains("NET ↓ 1.2M/s"), "{screen}");
+    assert!(screen.contains("NET ↑ 80K/s"), "{screen}");
+    assert!(!screen.contains("D-R") && !screen.contains("D-W"), "{screen}");
+  }
+
+  #[test]
   fn renders_three_cpu_tiers() {
     // M6 of issue #80: 6E + 4P + 2S
     let tier = |label: &str, cores| CpuTierInfo { label: label.into(), cores, freqs: vec![] };
