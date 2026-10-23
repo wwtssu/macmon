@@ -497,6 +497,91 @@ pub fn libc_swap() -> WithError<(u64, u64)> {
   Ok((usage, total))
 }
 
+// MARK: Disk and network
+
+/// Bytes read and written by every `IOBlockStorageDriver` since boot.
+pub(crate) fn disk_io_bytes() -> (u64, u64) {
+  let (mut read, mut written) = (0, 0);
+  let Ok(services) = IOServiceIterator::new("IOBlockStorageDriver") else {
+    return (read, written);
+  };
+
+  for (entry, name) in services {
+    if let Ok(props) = cfio_get_props(entry, name) {
+      if let Some(stats) = cfdict_get_val(props, "Statistics").map(|x| x as CFDictionaryRef) {
+        let bytes = |key| cfnum_get_i64(stats, key).unwrap_or_default().max(0) as u64;
+        read += bytes("Bytes (Read)");
+        written += bytes("Bytes (Write)");
+      }
+      unsafe { CFRelease(props as _) };
+    }
+    unsafe { IOObjectRelease(entry) };
+  }
+
+  (read, written)
+}
+
+/// Receive and send bytes of every interface since boot, keyed by interface name, from
+/// `getifaddrs`. Loopback is left out; its counters would double local traffic.
+pub(crate) fn net_io_counters() -> HashMap<String, (u32, u32)> {
+  let mut counters = HashMap::new();
+  let mut head = null_mut();
+  if unsafe { libc::getifaddrs(&mut head) } != 0 {
+    return counters;
+  }
+
+  let mut cur = head;
+  while !cur.is_null() {
+    let ifa = unsafe { &*cur };
+    let link = !ifa.ifa_addr.is_null()
+      && unsafe { (*ifa.ifa_addr).sa_family } as i32 == libc::AF_LINK
+      && !ifa.ifa_data.is_null()
+      && ifa.ifa_flags & libc::IFF_LOOPBACK as u32 == 0;
+    if link {
+      let name = unsafe { std::ffi::CStr::from_ptr(ifa.ifa_name) };
+      let data = unsafe { &*(ifa.ifa_data as *const libc::if_data) };
+      counters.insert(name.to_string_lossy().into_owned(), (data.ifi_ibytes, data.ifi_obytes));
+    }
+    cur = ifa.ifa_next;
+  }
+  unsafe { libc::freeifaddrs(head) };
+
+  counters
+}
+
+/// System-wide disk and network counters at one point in time.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct IoCounters {
+  /// Disk bytes read and written since boot.
+  pub disk: (u64, u64),
+  /// Interface receive and send bytes since boot, keyed by interface name.
+  pub net: HashMap<String, (u32, u32)>,
+}
+
+impl IoCounters {
+  pub(crate) fn read() -> Self {
+    Self { disk: disk_io_bytes(), net: net_io_counters() }
+  }
+
+  /// Bytes per second of disk read / write and network receive / send between `prev` and `self`.
+  /// Network counters are 32-bit and wrap per interface; disk counters reset only with a reboot.
+  pub(crate) fn rates(&self, prev: &Self, elapsed: Duration) -> ((u64, u64), (u64, u64)) {
+    let per_second = |delta: u64| (delta as f64 / elapsed.as_secs_f64().max(1e-9)).round() as u64;
+    let (read, written) =
+      (self.disk.0.saturating_sub(prev.disk.0), self.disk.1.saturating_sub(prev.disk.1));
+
+    let (mut rx, mut tx) = (0u64, 0u64);
+    for (name, &(i, o)) in &self.net {
+      if let Some(&(pi, po)) = prev.net.get(name) {
+        rx += u64::from(i.wrapping_sub(pi));
+        tx += u64::from(o.wrapping_sub(po));
+      }
+    }
+
+    ((per_second(read), per_second(written)), (per_second(rx), per_second(tx)))
+  }
+}
+
 // MARK: SockInfo
 
 /// Static Apple Silicon system information.
@@ -1849,6 +1934,23 @@ mod tests {
         ("S".into(), 2, vec![1440, 4788]),
       ]
     );
+  }
+
+  #[test]
+  fn io_rates_follow_counter_wrap_and_interface_changes() {
+    let prev = IoCounters {
+      disk: (1_000, 500),
+      net: HashMap::from([("en0".into(), (u32::MAX - 99, 10)), ("gone".into(), (50, 50))]),
+    };
+    let cur = IoCounters {
+      disk: (4_000, 2_500),
+      net: HashMap::from([("en0".into(), (100, 5_010)), ("new".into(), (999, 999))]),
+    };
+
+    // 200 bytes received through the wrap and 5000 sent over two seconds; `gone` and `new` have
+    // no interval to count
+    let ((read, written), (rx, tx)) = cur.rates(&prev, Duration::from_secs(2));
+    assert_eq!((read, written, rx, tx), (1_500, 1_000, 100, 2_500));
   }
 
   #[test]

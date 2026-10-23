@@ -86,6 +86,10 @@ fn to_prometheus(m: &Metrics, soc: &SocInfo) -> String {
   gauge_any!(out, "memory_ram_used_bytes", "Used RAM in bytes", m.memory.ram_usage);
   gauge_any!(out, "memory_swap_total_bytes", "Total swap in bytes", m.memory.swap_total);
   gauge_any!(out, "memory_swap_used_bytes", "Used swap in bytes", m.memory.swap_usage);
+  gauge_any!(out, "disk_read_bytes_per_second", "Disk bytes read per second", m.disk.read_bytes);
+  gauge_any!(out, "disk_write_bytes_per_second", "Disk bytes written per second", m.disk.write_bytes);
+  gauge_any!(out, "network_rx_bytes_per_second", "Network bytes received per second", m.network.rx_bytes);
+  gauge_any!(out, "network_tx_bytes_per_second", "Network bytes sent per second", m.network.tx_bytes);
   gauge_any!(out, "cpu_scaled_ratio", "Combined frequency-scaled CPU ratio (0–1), weighted by core count", m.cpu_scaled_ratio);
   gauge_any!(out, "cpu_usage_ratio", "DEPRECATED: use macmon_cpu_scaled_ratio", m.cpu_scaled_ratio);
   gauge_any!(out, "cpu_active_ratio", "Combined CPU active residency ratio (not frequency-scaled, 0–1), weighted by core count", m.cpu_active_ratio);
@@ -325,8 +329,16 @@ mod tests {
       ["cpu", "gpu", "ane", "all", "sys", "ram", "gpu_ram"].map(|x| format!("{x}_power_watts"));
     let freqs = ["ecpu_freq_mhz", "pcpu_freq_mhz", "cpu_tier_freq_mhz", "gpu_freq_mhz"];
     let mac = types(false);
-    assert_eq!(mac.len(), 29, "{mac:?}"); // no temperature and fan gauges without readings
+    assert_eq!(mac.len(), 33, "{mac:?}"); // no temperature and fan gauges without readings
     assert!(power.iter().chain(&freqs.map(String::from)).all(|x| mac.contains(x)), "{mac:?}");
+    for name in [
+      "disk_read_bytes_per_second",
+      "disk_write_bytes_per_second",
+      "network_rx_bytes_per_second",
+      "network_tx_bytes_per_second",
+    ] {
+      assert!(mac.iter().any(|x| x == name), "missing {name}: {mac:?}");
+    }
 
     // a VM: the same without the power and frequency gauges
     let expected = mac.iter().filter(|x| !power.contains(x) && !freqs.contains(&x.as_str()));
@@ -374,7 +386,9 @@ mod tests {
     let json: serde_json::Value =
       serde_json::from_str(&to_json(&Metrics::default(), &SocInfo::default())).unwrap();
 
-    for field in ["cpu_tiers", "cpu_usage_pct", "ecpu_usage", "pcpu_usage", "gpu_usage"] {
+    for field in
+      ["cpu_tiers", "cpu_usage_pct", "ecpu_usage", "pcpu_usage", "gpu_usage", "disk", "network"]
+    {
       assert!(json.get(field).is_some(), "missing {field}");
     }
   }

@@ -28,7 +28,9 @@ use ratatui::crossterm::event::{
 };
 use ratatui::crossterm::{ExecutableCommand, cursor, terminal};
 use ratatui::prelude::*;
-use store::{CpuClusters, FanStore, FreqSample, FreqStore, MemoryStore, PowerStore, TempStore};
+use store::{
+  CpuClusters, FanStore, FreqSample, FreqStore, MemoryStore, PowerStore, TempStore, ThroughputStore,
+};
 
 use crate::config::{Config, TUI_MIN_MS};
 use crate::procs::{ProcInfo, ProcSampler};
@@ -282,6 +284,10 @@ pub struct App {
 
   soc: SocInfo,
   mem: MemoryStore,
+  disk_read: ThroughputStore,
+  disk_write: ThroughputStore,
+  net_in: ThroughputStore,
+  net_out: ThroughputStore,
 
   cpu_power: PowerStore,
   gpu_power: PowerStore,
@@ -343,6 +349,10 @@ impl App {
     self.fans.push(data.fans);
 
     self.mem.push(data.memory);
+    self.disk_read.push(data.disk.read_bytes);
+    self.disk_write.push(data.disk.write_bytes);
+    self.net_in.push(data.network.rx_bytes);
+    self.net_out.push(data.network.tx_bytes);
   }
 
   fn procs_visible(&self) -> bool {
@@ -579,7 +589,10 @@ mod tests {
   use std::sync::{Arc, Mutex, RwLock, mpsc};
   use std::time::Duration;
 
-  use macmon::{CpuTierInfo, CpuTierMetrics, FanMetric, MemMetrics, Metrics, SocInfo, TempMetrics};
+  use macmon::{
+    CpuTierInfo, CpuTierMetrics, DiskMetrics, FanMetric, MemMetrics, Metrics, NetMetrics, SocInfo,
+    TempMetrics,
+  };
   use ratatui::Terminal;
   use ratatui::backend::TestBackend;
   use ratatui::buffer::{Buffer, CellDiffOption};
@@ -647,6 +660,8 @@ mod tests {
         swap_usage: 1 << 30,
       },
       fans: vec![FanMetric { name: "fan0".to_string(), rpm: 1200, max_rpm: Some(6000) }],
+      disk: DiskMetrics { read_bytes: 12_300_000, write_bytes: 4_500_000 },
+      network: NetMetrics { rx_bytes: 1_200_000, tx_bytes: 80_000 },
       cpu_tiers: vec![cpu_tier("E", 1800, 0.42, 0.5), cpu_tier("P", 3200, 0.77, 0.8)],
       gpu_freq_mhz: 1400,
       gpu_scaled_ratio: 0.23,
@@ -1201,7 +1216,20 @@ mod tests {
   #[test]
   fn renders_every_box_at_any_size() {
     use Metric::*;
-    let every_box = [Cluster(0), Cluster(1), Gpu, Ram, CpuPower, GpuPower, AnePower, TotalPower];
+    let every_box = [
+      Cluster(0),
+      Cluster(1),
+      Gpu,
+      Ram,
+      CpuPower,
+      GpuPower,
+      AnePower,
+      TotalPower,
+      DiskRead,
+      DiskWrite,
+      NetIn,
+      NetOut,
+    ];
     let sizes = [
       (400, 120),
       (200, 50),
@@ -1248,7 +1276,7 @@ mod tests {
 
   /// Full box titles of `test_metrics`: the original format without the RAM total and without
   /// alignment padding.
-  const TITLES: [&str; 8] = [
+  const TITLES: [&str; 12] = [
     "E-CPU 42% @ 1800 MHz",
     "P-CPU 77% @ 3200 MHz",
     "GPU 23% @ 1400 MHz",
@@ -1257,6 +1285,10 @@ mod tests {
     "GPU 2.00W (2.00, 2.00)",
     "ANE 0.10W (0.10, 0.10)",
     "Total 12.00W (12.00, 12.00)",
+    "DISK R 12.3 MB/s",
+    "DISK W 4.5 MB/s",
+    "NET ↓ 1.2 MB/s",
+    "NET ↑ 80.0 KB/s",
   ];
 
   /// Top border of the metric box `metric` in a rendered frame.
@@ -1270,6 +1302,19 @@ mod tests {
     let (_, area) = boxes.into_iter().find(|(m, _)| *m == metric).expect("metric box");
     let y = if bottom { area.bottom() - 1 } else { area.y };
     (area.left()..area.right()).map(|x| buf[(x, y)].symbol()).collect()
+  }
+
+  #[test]
+  fn narrow_throughput_boxes_keep_their_labels() {
+    let mut app = test_app();
+    let screen = render_to_string(&mut app, 80, 24);
+
+    // 19-20 cells per box: the full rate does not fit, the compact one does; the label stays
+    assert!(screen.contains("DISK R 12M/s"), "{screen}");
+    assert!(screen.contains("DISK W 4.5M/s"), "{screen}");
+    assert!(screen.contains("NET ↓ 1.2M/s"), "{screen}");
+    assert!(screen.contains("NET ↑ 80K/s"), "{screen}");
+    assert!(!screen.contains("D-R") && !screen.contains("D-W"), "{screen}");
   }
 
   #[test]
@@ -1324,10 +1369,21 @@ mod tests {
     }
     assert!(!screen.contains("MHz") && !screen.contains("_-CPU"));
 
-    // no power row: CPU, GPU and RAM take the whole metrics box, the process box stays
+    // no power row: CPU, GPU and RAM share the metrics box with the I/O row, the process box stays
     let boxes = app.layout(buf.area).boxes;
     let rows = boxes.iter().map(|(m, r)| (*m, r.y, r.height)).collect::<Vec<_>>();
-    assert_eq!(rows, [(Metric::Cluster(0), 1, 18), (Metric::Gpu, 1, 18), (Metric::Ram, 1, 18)]);
+    assert_eq!(
+      rows,
+      [
+        (Metric::Cluster(0), 1, 9),
+        (Metric::Gpu, 1, 9),
+        (Metric::Ram, 1, 9),
+        (Metric::DiskRead, 10, 9),
+        (Metric::DiskWrite, 10, 9),
+        (Metric::NetIn, 10, 9),
+        (Metric::NetOut, 10, 9)
+      ]
+    );
     assert!(!screen.contains("0.00W") && !screen.contains("ANE"), "{screen}");
     assert!(proc_row(&buf, 0).starts_with("╭─ proc 3 "), "{}", proc_row(&buf, 0));
     // POWER reads `-` for every process, without the note on own processes
@@ -1341,7 +1397,7 @@ mod tests {
   #[test]
   fn only_a_vm_drops_the_power_row_and_process_power() {
     // processes sampled before the first metrics sample: the chip already tells a VM
-    for (vm, boxes, power, note) in [(false, 8, "1.50W", true), (true, 4, "-", false)] {
+    for (vm, boxes, power, note) in [(false, 12, "1.50W", true), (true, 8, "-", false)] {
       let soc = SocInfo { vm, ..test_soc() };
       let app = &mut with_procs(App::from_parts(soc, Config::default()), varied_procs());
       let buf = render_buffer(app, 200, 50);

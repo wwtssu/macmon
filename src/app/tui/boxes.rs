@@ -14,7 +14,7 @@ use ratatui::widgets::{Block, BorderType, Scrollbar, ScrollbarOrientation, Scrol
 use super::App;
 use super::layout::{LayoutPlan, Metric};
 use super::proc_view::{ELLIPSIS, head};
-use super::store::{ClusterStore, FreqStore, PowerStore, ratio};
+use super::store::{ClusterStore, FreqStore, PowerStore, ThroughputStore, ratio};
 use super::theme::{self, dim, faint, gradient, heading, text};
 use super::widgets::{Gauge, Graph};
 use crate::config::{RatioMode, TUI_MAX_MS, ViewType};
@@ -29,6 +29,23 @@ const BORDER_TEXT_MIN: u16 = 8;
 /// Temperature position on the load gradient: 30 °C is cool, 100 °C is hot.
 fn temp_ratio(celsius: f32) -> f64 {
   (f64::from(celsius) - 30.0) / 70.0
+}
+
+/// `999 B/s`, `12.3 KB/s`, `4.5 MB/s`, `1.2 GB/s`: decimal units, one decimal from a thousand
+/// bytes per second up. Compact drops the `B` and the space (`4.5M/s`) and the decimal from 10 up
+/// (`12M/s`), so a narrow box can keep its full label.
+fn format_rate(bytes: u64, compact: bool) -> String {
+  let (value, unit) = [(1e9, "G"), (1e6, "M"), (1e3, "K")]
+    .into_iter()
+    .find(|&(scale, _)| bytes as f64 >= scale)
+    .map_or((bytes as f64, ""), |(scale, unit)| (bytes as f64 / scale, unit));
+  let number = if compact && value >= 10.0 { format!("{value:.0}") } else { format!("{value:.1}") };
+  match (compact, unit) {
+    (true, "") => format!("{bytes}B/s"),
+    (true, unit) => format!("{number}{unit}/s"),
+    (false, "") => format!("{bytes} B/s"),
+    (false, unit) => format!("{number} {unit}B/s"),
+  }
 }
 
 /// `width` cells as `u16`, the type of screen coordinates; saturating, as no text on screen is
@@ -319,6 +336,8 @@ enum Scale {
   /// Power: the graph is scaled to its largest visible sample, in the low load color, as in the
   /// original; no gauge.
   Power,
+  /// Disk or network throughput: like power, with no fixed maximum.
+  Throughput,
 }
 
 /// Titles and graph of one metric box.
@@ -374,7 +393,7 @@ impl App {
           f.render_widget(Gauge::new(load), inner)
         }
         Scale::Load { max, .. } => f.render_widget(graph.max(max), inner),
-        Scale::Power => f.render_widget(graph.color(gradient(0.0)), inner),
+        Scale::Power | Scale::Throughput => f.render_widget(graph.color(gradient(0.0)), inner),
       }
 
       // the fans (`1200 rpm`) right on the bottom border of the total power box
@@ -443,6 +462,10 @@ impl App {
       Metric::GpuPower => self.power_box("GPU", &self.gpu_power, self.gpu_temp.last()),
       Metric::AnePower => self.power_box("ANE", &self.ane_power, None),
       Metric::TotalPower => self.total_power_box(),
+      Metric::DiskRead => self.throughput_box("DISK R", &self.disk_read),
+      Metric::DiskWrite => self.throughput_box("DISK W", &self.disk_write),
+      Metric::NetIn => self.throughput_box("NET ↓", &self.net_in),
+      Metric::NetOut => self.throughput_box("NET ↑", &self.net_out),
     }
   }
 
@@ -521,6 +544,19 @@ impl App {
     MetricBox { titles: titles.into(), data: &store.items, scale: Scale::Power }
   }
 
+  /// `DISK R 12.3 MB/s` over the throughput history, `DISK R 12.3M/s` when the box is narrow, and
+  /// `DISK R` alone when not even the compact rate fits: the label never shortens. The graph is
+  /// scaled to its largest visible sample like the power boxes.
+  fn throughput_box<'a>(&self, label: &'static str, store: &'a ThroughputStore) -> MetricBox<'a> {
+    let bytes = store.items.first().copied().unwrap_or(0);
+    let rate = |compact| format_rate(bytes, compact);
+    let titles = [rate(false), rate(true)]
+      .map(|rate| Titles::new(Line::from(vec![heading(label), text(format!(" {rate}"))])));
+    let mut titles: Vec<Titles> = titles.into();
+    titles.push(Titles::new(heading(label)));
+    MetricBox { titles, data: &store.items, scale: Scale::Throughput }
+  }
+
   /// `Total 12.00W (12.00, 12.00)`, the whole system, or `Power 6.60W (6.60, 6.60)`, CPU + GPU +
   /// ANE, without the system power sensor. The fans go on its bottom border (`render_metrics_box`).
   fn total_power_box(&self) -> MetricBox<'_> {
@@ -543,7 +579,8 @@ mod tests {
   use ratatui::text::Span;
 
   use super::{
-    Titles, draw_box, draw_scrollbar, fit_titles, hint, place_titles, render_bottom_border,
+    Titles, draw_box, draw_scrollbar, fit_titles, format_rate, hint, place_titles,
+    render_bottom_border,
   };
   use crate::tui::theme::{self, dim, text};
 
@@ -588,6 +625,25 @@ mod tests {
     // none fits: the last one is cut
     assert_eq!(fitted(14), "── CPU 4.50W──");
     assert_eq!(fitted(10), "── CPU 4──");
+  }
+
+  #[test]
+  fn formats_byte_rates_in_decimal_units() {
+    for (bytes, full, compact) in [
+      (0, "0 B/s", "0B/s"),
+      (999, "999 B/s", "999B/s"),
+      (1_000, "1.0 KB/s", "1.0K/s"),
+      (12_300, "12.3 KB/s", "12K/s"),
+      (123_000, "123.0 KB/s", "123K/s"),
+      (1_240_000, "1.2 MB/s", "1.2M/s"),
+      (4_500_000, "4.5 MB/s", "4.5M/s"),
+      (12_300_000, "12.3 MB/s", "12M/s"),
+      (999_900_000, "999.9 MB/s", "1000M/s"),
+      (1_000_000_000, "1.0 GB/s", "1.0G/s"),
+    ] {
+      assert_eq!(format_rate(bytes, false), full, "{bytes}");
+      assert_eq!(format_rate(bytes, true), compact, "{bytes}");
+    }
   }
 
   #[test]

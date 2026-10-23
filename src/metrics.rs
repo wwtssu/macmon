@@ -1,7 +1,7 @@
 //! Metrics model and hardware sampler.
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use core_foundation::dictionary::CFDictionaryRef;
 use serde::Serialize;
@@ -10,8 +10,8 @@ use crate::shared::{
   ioreport_channels_filter, is_clpc_energy_channel, is_pmp_ane_channel, zero_div,
 };
 use crate::sources::{
-  IOHIDSensors, IOReport, IOReportIteratorItem, SMC, SocInfo, cfio_get_residencies, cfio_watts,
-  cpu_load_ticks, get_soc_info, libc_ram, libc_swap,
+  IOHIDSensors, IOReport, IOReportIteratorItem, IoCounters, SMC, SocInfo, cfio_get_residencies,
+  cfio_watts, cpu_load_ticks, get_soc_info, libc_ram, libc_swap,
 };
 
 type WithError<T> = Result<T, Box<dyn std::error::Error>>;
@@ -75,6 +75,24 @@ pub struct MemMetrics {
   pub swap_total: u64,
   /// Used swap in bytes.
   pub swap_usage: u64,
+}
+
+/// System-wide disk throughput.
+#[derive(Debug, Default, Serialize)]
+pub struct DiskMetrics {
+  /// Bytes read per second over the sampling interval.
+  pub read_bytes: u64,
+  /// Bytes written per second over the sampling interval.
+  pub write_bytes: u64,
+}
+
+/// System-wide network throughput.
+#[derive(Debug, Default, Serialize)]
+pub struct NetMetrics {
+  /// Bytes received per second over the sampling interval.
+  pub rx_bytes: u64,
+  /// Bytes sent per second over the sampling interval.
+  pub tx_bytes: u64,
 }
 
 /// Fan speed metrics.
@@ -150,6 +168,10 @@ pub struct Metrics {
   pub temp: TempMetrics,
   /// Memory and swap metrics.
   pub memory: MemMetrics,
+  /// Disk read and write throughput.
+  pub disk: DiskMetrics,
+  /// Network receive and send throughput.
+  pub network: NetMetrics,
   /// Fan metrics ordered by stable SMC fan key order.
   pub fans: Vec<FanMetric>,
   /// Combined frequency-weighted active residency across all CPU cores.
@@ -530,6 +552,8 @@ pub struct Sampler {
   use_cpu_ticks: bool,
   /// CPU ticks at the end of the last sample; the first sample takes its own baseline.
   cpu_ticks: Option<Vec<[u32; 4]>>,
+  /// Disk and network counters with the time they were read; the first sample sets the baseline.
+  io: Option<(Instant, IoCounters)>,
   hid: IOHIDSensors,
   smc: Option<SMC>,
   smc_cpu_keys: Vec<String>,
@@ -554,6 +578,7 @@ impl Sampler {
       ior,
       use_cpu_ticks,
       cpu_ticks: None,
+      io: None,
       hid,
       smc: smc_sensors.smc,
       smc_cpu_keys: smc_sensors.cpu_keys,
@@ -780,6 +805,16 @@ impl Sampler {
       Err(_) => 0.0,
     };
 
+    // The first sample sets the counter baseline, so its rates are zero.
+    let io = IoCounters::read();
+    let now = Instant::now();
+    if let Some((at, prev)) = &self.io {
+      let ((read, written), (rx, tx)) = io.rates(prev, now.duration_since(*at));
+      rs.disk = DiskMetrics { read_bytes: read, write_bytes: written };
+      rs.network = NetMetrics { rx_bytes: rx, tx_bytes: tx };
+    }
+    self.io = Some((now, io));
+
     Ok(rs)
   }
 
@@ -878,6 +913,7 @@ mod tests {
       ior: None,
       use_cpu_ticks: true,
       cpu_ticks: None,
+      io: None,
       hid: IOHIDSensors::new().unwrap(),
       smc: None,
       smc_cpu_keys: vec![],
