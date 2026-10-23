@@ -566,7 +566,7 @@ impl IoCounters {
   /// Bytes per second of disk read / write and network receive / send between `prev` and `self`.
   /// Network counters are 32-bit and wrap per interface; disk counters reset only with a reboot.
   pub(crate) fn rates(&self, prev: &Self, elapsed: Duration) -> ((u64, u64), (u64, u64)) {
-    let per_second = |delta: u64| (delta as f64 / elapsed.as_secs_f64()).round() as u64;
+    let per_second = |delta: u64| (delta as f64 / elapsed.as_secs_f64().max(1e-9)).round() as u64;
     let (read, written) =
       (self.disk.0.saturating_sub(prev.disk.0), self.disk.1.saturating_sub(prev.disk.1));
 

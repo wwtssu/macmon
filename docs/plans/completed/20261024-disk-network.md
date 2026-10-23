@@ -13,7 +13,7 @@ stop and report past it.
 ╭─ Apple M3 Pro (6E+6P+18GPU 36GB) ───────────────────────────────────── macmon v0.11.0 ─╮
 │ ╭─ E-CPU 42% @ 1800 MHz ─╮ ╭─ P-CPU 77% @ 3200 MHz ─╮ ╭─ GPU 23% @ 1400 MHz ─╮ …     │
 │ ╭─ CPU 4.50W (4.50, 4.50) ─╮ ╭─ GPU 2.00W ─╮ ╭─ ANE 0.10W ─╮ ╭─ Total 12.00W ─╮       │
-│ ╭─ DISK R 12.3 MB/s ─╮ ╭─ DISK W 4.5 MB/s ─╮ ╭─ NET ↓ 1.2 MB/s ─╮ ╭─ NET ↑ 80 KB/s ─╮ │
+│ ╭─ DISK R 12.3 MB/s ─╮ ╭─ DISK W 4.5 MB/s ─╮ ╭─ NET ↓ 1.2 MB/s ─╮ ╭─ NET ↑ 80.0 KB/s ─╮ │
 ```
 
 - A third row of four boxes under the power row, always present: disk read, disk write, network
@@ -37,7 +37,7 @@ stop and report past it.
 - The sampler keeps the counters and timestamp of the previous sample: the first sample is 0 B/s,
   later rates divide by the measured wall time between counter reads.
 - Library API is additive: `Metrics` gains `disk: DiskMetrics` and `network: NetMetrics`.
-- Boxes use decimal units (`kB/s`, `MB/s`, `GB/s`) with one decimal above 1 kB/s, as disk and
+- Boxes use decimal units (`KB/s`, `MB/s`, `GB/s`) with one decimal above 1 KB/s, as disk and
   network speeds are normally quoted.
 
 ## Tasks
