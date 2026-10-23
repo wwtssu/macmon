@@ -1,3 +1,5 @@
+Done: 2026-10-24, PR #1
+
 # Disk and network throughput (roadmap item 15)
 
 System-wide disk read / write and network receive / send throughput: four new metric boxes in
@@ -46,3 +48,8 @@ stop and report past it.
 - [x] TUI: `Metric::DiskRead` / `DiskWrite` / `NetIn` / `NetOut`, third layout row, history store,
   rate formatting and titles; update layout and render tests; roadmap item 15 links this plan.
 - [x] `make check` and `make test`; runtime check with `macmon pipe` and the TUI.
+
+## Result
+
+Four TUI boxes, four Prometheus gauges and the `disk` / `network` JSON objects ship with
+`Metrics::disk` / `Metrics::network` in the library. +198 production lines.

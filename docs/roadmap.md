@@ -85,7 +85,7 @@ POWER does today.
 - [x] **15. Disk and network metrics.** What node exporter has and macmon doesn't (asked on
       Reddit): disk read / write and network in / out, system-wide, in the TUI, JSON and
       Prometheus. Four boxes in a third metrics row.
-      Plan: [docs/plans/20261024-disk-network.md](plans/20261024-disk-network.md).
+      Plan: [docs/plans/completed/20261024-disk-network.md](plans/completed/20261024-disk-network.md).
 - [ ] **16. App totals with their helpers.** Asked on Reddit: a filter term totals only the
       processes whose name matches, so Safari's `com.apple.WebKit.WebContent` tabs are left out.
       Group an app's helper processes under it, expandable to show which ones are counted. Until
