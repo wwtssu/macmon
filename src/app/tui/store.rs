@@ -149,6 +149,19 @@ impl MemoryStore {
   }
 }
 
+/// Disk or network throughput history in bytes per second, newest first.
+#[derive(Debug, Default)]
+pub(super) struct ThroughputStore {
+  pub(super) items: Vec<u64>,
+}
+
+impl ThroughputStore {
+  pub(super) fn push(&mut self, bytes_per_second: u64) {
+    self.items.insert(0, bytes_per_second);
+    self.items.truncate(HISTORY_LEN);
+  }
+}
+
 #[derive(Debug, Default)]
 pub(super) struct TempStore {
   items: Vec<f32>,
@@ -225,6 +238,7 @@ mod tests {
 
   use super::{
     FreqSample, FreqStore, HISTORY_LEN, MAX_TEMPS, MemoryStore, PowerStore, STATS_LEN, TempStore,
+    ThroughputStore,
   };
   use crate::config::RatioMode;
 
@@ -258,11 +272,13 @@ mod tests {
   fn histories_are_capped() {
     let (mut power, mut freq) = (PowerStore::default(), FreqStore::default());
     let (mut mem, mut temp) = (MemoryStore::default(), TempStore::default());
+    let mut io = ThroughputStore::default();
     for i in 0..HISTORY_LEN + 10 {
       power.push(i as f64);
       freq.push(FreqSample::new(1000, 0.25, 0.5));
       mem.push(MemMetrics { ram_total: 100, ram_usage: i as u64, swap_total: 0, swap_usage: 0 });
       temp.push(Some(i as f32 + 1.0));
+      io.push(i as u64);
     }
 
     // newest first
@@ -273,6 +289,7 @@ mod tests {
       assert_eq!(freq.ratio(mode).items.len(), HISTORY_LEN, "{mode:?}");
     }
     assert_eq!((temp.items.len(), temp.last()), (MAX_TEMPS, Some(last as f32 + 1.0)));
+    assert_eq!((io.items.len(), io.items[0]), (HISTORY_LEN, last));
   }
 
   #[test]

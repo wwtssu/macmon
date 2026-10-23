@@ -14,7 +14,7 @@ use ratatui::widgets::{Block, BorderType, Scrollbar, ScrollbarOrientation, Scrol
 use super::App;
 use super::layout::{LayoutPlan, Metric};
 use super::proc_view::{ELLIPSIS, head};
-use super::store::{ClusterStore, FreqStore, PowerStore, ratio};
+use super::store::{ClusterStore, FreqStore, PowerStore, ThroughputStore, ratio};
 use super::theme::{self, dim, faint, gradient, heading, text};
 use super::widgets::{Gauge, Graph};
 use crate::config::{RatioMode, TUI_MAX_MS, ViewType};
@@ -29,6 +29,21 @@ const BORDER_TEXT_MIN: u16 = 8;
 /// Temperature position on the load gradient: 30 °C is cool, 100 °C is hot.
 fn temp_ratio(celsius: f32) -> f64 {
   (f64::from(celsius) - 30.0) / 70.0
+}
+
+/// `999 B/s`, `12.3 KB/s`, `4.5 MB/s`, `1.2 GB/s`: decimal units, one decimal from a thousand
+/// bytes per second up.
+fn format_rate(bytes: u64) -> String {
+  let value = bytes as f64;
+  if value >= 1e9 {
+    format!("{:.1} GB/s", value / 1e9)
+  } else if value >= 1e6 {
+    format!("{:.1} MB/s", value / 1e6)
+  } else if value >= 1e3 {
+    format!("{:.1} KB/s", value / 1e3)
+  } else {
+    format!("{bytes} B/s")
+  }
 }
 
 /// `width` cells as `u16`, the type of screen coordinates; saturating, as no text on screen is
@@ -319,6 +334,8 @@ enum Scale {
   /// Power: the graph is scaled to its largest visible sample, in the low load color, as in the
   /// original; no gauge.
   Power,
+  /// Disk or network throughput: like power, with no fixed maximum.
+  Throughput,
 }
 
 /// Titles and graph of one metric box.
@@ -374,7 +391,7 @@ impl App {
           f.render_widget(Gauge::new(load), inner)
         }
         Scale::Load { max, .. } => f.render_widget(graph.max(max), inner),
-        Scale::Power => f.render_widget(graph.color(gradient(0.0)), inner),
+        Scale::Power | Scale::Throughput => f.render_widget(graph.color(gradient(0.0)), inner),
       }
 
       // the fans (`1200 rpm`) right on the bottom border of the total power box
@@ -443,6 +460,10 @@ impl App {
       Metric::GpuPower => self.power_box("GPU", &self.gpu_power, self.gpu_temp.last()),
       Metric::AnePower => self.power_box("ANE", &self.ane_power, None),
       Metric::TotalPower => self.total_power_box(),
+      Metric::DiskRead => self.throughput_box("DISK R", "D-R", &self.disk_read),
+      Metric::DiskWrite => self.throughput_box("DISK W", "D-W", &self.disk_write),
+      Metric::NetIn => self.throughput_box("NET ↓", "NET↓", &self.net_in),
+      Metric::NetOut => self.throughput_box("NET ↑", "NET↑", &self.net_out),
     }
   }
 
@@ -521,6 +542,20 @@ impl App {
     MetricBox { titles: titles.into(), data: &store.items, scale: Scale::Power }
   }
 
+  /// `DISK R 12.3 MB/s` over the throughput history, or `D-R 12.3 MB/s` when the box is narrow,
+  /// scaled to its largest visible sample like the power boxes.
+  fn throughput_box<'a>(
+    &self,
+    label: &'static str,
+    short: &'static str,
+    store: &'a ThroughputStore,
+  ) -> MetricBox<'a> {
+    let rate = format_rate(store.items.first().copied().unwrap_or(0));
+    let titles = [label, short]
+      .map(|label| Titles::new(Line::from(vec![heading(label), text(format!(" {rate}"))])));
+    MetricBox { titles: titles.into(), data: &store.items, scale: Scale::Throughput }
+  }
+
   /// `Total 12.00W (12.00, 12.00)`, the whole system, or `Power 6.60W (6.60, 6.60)`, CPU + GPU +
   /// ANE, without the system power sensor. The fans go on its bottom border (`render_metrics_box`).
   fn total_power_box(&self) -> MetricBox<'_> {
@@ -543,7 +578,8 @@ mod tests {
   use ratatui::text::Span;
 
   use super::{
-    Titles, draw_box, draw_scrollbar, fit_titles, hint, place_titles, render_bottom_border,
+    Titles, draw_box, draw_scrollbar, fit_titles, format_rate, hint, place_titles,
+    render_bottom_border,
   };
   use crate::tui::theme::{self, dim, text};
 
@@ -588,6 +624,21 @@ mod tests {
     // none fits: the last one is cut
     assert_eq!(fitted(14), "── CPU 4.50W──");
     assert_eq!(fitted(10), "── CPU 4──");
+  }
+
+  #[test]
+  fn formats_byte_rates_in_decimal_units() {
+    for (bytes, rate) in [
+      (0, "0 B/s"),
+      (999, "999 B/s"),
+      (1_000, "1.0 KB/s"),
+      (12_300, "12.3 KB/s"),
+      (1_240_000, "1.2 MB/s"),
+      (12_300_000, "12.3 MB/s"),
+      (1_000_000_000, "1.0 GB/s"),
+    ] {
+      assert_eq!(format_rate(bytes), rate, "{bytes}");
+    }
   }
 
   #[test]
