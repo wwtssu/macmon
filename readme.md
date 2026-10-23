@@ -153,6 +153,22 @@ macmon_cpu_power_watts{chip="Apple M3 Pro"} 8.42
 # TYPE macmon_fan_speed_rpm gauge
 macmon_fan_speed_rpm{chip="Apple M3 Pro",fan="fan0"} 1234
 
+# HELP macmon_disk_read_bytes_per_second Disk bytes read per second
+# TYPE macmon_disk_read_bytes_per_second gauge
+macmon_disk_read_bytes_per_second{chip="Apple M3 Pro"} 12300000
+
+# HELP macmon_disk_write_bytes_per_second Disk bytes written per second
+# TYPE macmon_disk_write_bytes_per_second gauge
+macmon_disk_write_bytes_per_second{chip="Apple M3 Pro"} 4500000
+
+# HELP macmon_network_rx_bytes_per_second Network bytes received per second
+# TYPE macmon_network_rx_bytes_per_second gauge
+macmon_network_rx_bytes_per_second{chip="Apple M3 Pro"} 1200000
+
+# HELP macmon_network_tx_bytes_per_second Network bytes sent per second
+# TYPE macmon_network_tx_bytes_per_second gauge
+macmon_network_tx_bytes_per_second{chip="Apple M3 Pro"} 80000
+
 # HELP macmon_cpu_scaled_ratio Combined frequency-scaled CPU ratio (0–1), weighted by core count
 # TYPE macmon_cpu_scaled_ratio gauge
 macmon_cpu_scaled_ratio{chip="Apple M3 Pro"} 0.037
@@ -225,6 +241,14 @@ The `pipe` command and the HTTP `/json` endpoint return the same metrics. In a m
     "ram_usage": 20985479168, // Bytes
     "swap_total": 4294967296, // Bytes
     "swap_usage": 2602434560, // Bytes
+  },
+  "disk": {
+    "read_bytes": 12300000, // Bytes per second over the sampling interval
+    "write_bytes": 4500000,
+  },
+  "network": {
+    "rx_bytes": 1200000, // Bytes per second over the sampling interval
+    "tx_bytes": 80000,
   },
   "fans": [
     { "name": "fan0", "rpm": 999, "max_rpm": 4900 },
